@@ -1,0 +1,876 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fennec Trace — AB1 chromatogram viewer</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#16222e">
+<style>
+:root{
+  --chrome:#e8ecef; --chrome2:#dde3e8; --ink:#16222e; --ink2:#5b6b78;
+  --pane:#ffffff; --line:#c9d2d9; --accent:#c96f2f; /* fennec ochre */
+  --A:#1fa04b; --C:#2b6fd4; --G:#111418; --T:#df3227; --amb:#8a3ffc;
+  --sel:rgba(255,213,79,.42); --motif:rgba(0,180,170,.25); --trim:rgba(120,130,140,.14);
+  --het:#ff8f1f;
+  font-size:14px;
+}
+*{box-sizing:border-box; margin:0}
+html,body{height:100%}
+body{font-family:"Segoe UI",system-ui,-apple-system,sans-serif; background:var(--chrome); color:var(--ink); display:flex; flex-direction:column; overflow:hidden}
+.mono{font-family:ui-monospace,"Cascadia Mono","Consolas",monospace}
+
+/* ---------- top bar ---------- */
+#topbar{display:flex; align-items:center; gap:10px; padding:6px 12px; background:var(--ink); color:#dfe7ee; flex-wrap:wrap}
+#logo{display:flex; align-items:center; gap:8px; font-weight:600; letter-spacing:.4px}
+#logo .dots span{display:inline-block; width:8px; height:8px; border-radius:50%; margin-left:3px}
+#logo small{color:#8fa2b3; font-weight:400}
+#topbar .grow{flex:1}
+button, select, input[type=text]{font:inherit}
+.btn{background:#243546; color:#e8eef4; border:1px solid #34495c; border-radius:6px; padding:5px 11px; cursor:pointer}
+.btn:hover{background:#2e455c}
+.btn.primary{background:var(--accent); border-color:var(--accent); color:#fff}
+.btn.primary:hover{filter:brightness(1.08)}
+.btn:focus-visible, input:focus-visible, select:focus-visible{outline:2px solid var(--accent); outline-offset:1px}
+#searchbox{display:flex; align-items:center; gap:5px; background:#0f1822; border:1px solid #34495c; border-radius:6px; padding:2px 4px 2px 10px}
+#searchbox input{background:transparent; border:0; color:#e8eef4; width:180px; outline:none}
+#searchbox .mini{background:transparent; border:0; color:#9fb2c2; cursor:pointer; padding:3px 6px; border-radius:4px}
+#searchbox .mini:hover{background:#243546; color:#fff}
+#searchCount{color:#8fa2b3; font-size:12px; min-width:52px; text-align:center}
+
+/* ---------- tab strip ---------- */
+#tabstrip{display:flex; align-items:center; gap:4px; padding:5px 10px 0; background:var(--chrome2); border-bottom:1px solid var(--line); overflow-x:auto; scrollbar-width:thin}
+.tab{display:flex; align-items:center; gap:7px; padding:5px 8px 5px 12px; background:#cfd7dd; border:1px solid var(--line); border-bottom:none; border-radius:7px 7px 0 0; cursor:pointer; white-space:nowrap; font-size:12.5px; color:#42525f}
+.tab.active{background:var(--pane); color:var(--ink); font-weight:600}
+.tab .x{border:0; background:transparent; cursor:pointer; color:#7a8a96; border-radius:4px; padding:0 4px; font-size:14px; line-height:1}
+.tab .x:hover{background:#b7c2ca; color:#1c2733}
+#splitBtn{margin-left:auto; margin-bottom:4px}
+
+/* ---------- panes ---------- */
+#panes{flex:1; display:flex; flex-direction:column; min-height:0}
+.pane{flex:1; display:flex; flex-direction:column; min-height:0; background:var(--pane); position:relative}
+.pane + .pane{border-top:3px solid var(--ink)}
+.pane.focused::before{content:""; position:absolute; inset:0 auto 0 0; width:3px; background:var(--accent); z-index:5}
+.pane-head{display:flex; align-items:center; gap:10px; padding:5px 12px; border-bottom:1px solid var(--line); background:#f4f6f8; flex-wrap:wrap; font-size:12.5px}
+.pane-head .name{font-weight:600; max-width:340px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.pane-head label{display:flex; align-items:center; gap:5px; color:var(--ink2)}
+.pane-head input[type=range]{width:110px; accent-color:var(--accent)}
+.tbtn{background:#fff; border:1px solid var(--line); border-radius:6px; padding:3px 9px; cursor:pointer; color:var(--ink)}
+.tbtn:hover{background:#eef2f5}
+.tbtn.on{background:var(--ink); color:#fff; border-color:var(--ink)}
+.canvasHolder{flex:1; position:relative; min-height:120px; cursor:text}
+.canvasHolder canvas{position:absolute; inset:0; width:100%; height:100%}
+.hscroll{height:14px; overflow-x:scroll; overflow-y:hidden; background:#f4f6f8; border-top:1px solid var(--line)}
+.hscroll > div{height:1px}
+.minimap{height:30px; border-top:1px solid var(--line); position:relative; cursor:pointer; background:#fbfcfd}
+.minimap canvas{position:absolute; inset:0; width:100%; height:100%}
+.statusbar{display:flex; gap:18px; padding:3px 12px; font-size:12px; color:var(--ink2); background:#f4f6f8; border-top:1px solid var(--line); flex-wrap:wrap}
+.statusbar b{color:var(--ink)}
+.emptyPane{flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px; color:var(--ink2)}
+.emptyPane .big{font-size:42px}
+
+/* het side list */
+.hetPanel{position:absolute; top:34px; right:0; bottom:44px; width:230px; background:#fffdf7; border-left:1px solid var(--line); z-index:6; display:none; flex-direction:column}
+.hetPanel.open{display:flex}
+.hetPanel h4{padding:8px 12px; font-size:12px; text-transform:uppercase; letter-spacing:.6px; color:var(--ink2); border-bottom:1px solid var(--line)}
+.hetPanel .list{flex:1; overflow-y:auto}
+.hetItem{display:flex; gap:8px; padding:6px 12px; cursor:pointer; font-size:12.5px; border-bottom:1px solid #f0ead9}
+.hetItem:hover{background:#fdf3e2}
+.hetItem .code{font-weight:700; color:var(--amb)}
+.hetItem .pos{color:var(--ink2)}
+
+/* ---------- overlays ---------- */
+#dropOverlay{position:fixed; inset:0; background:rgba(22,34,46,.85); color:#fff; display:none; align-items:center; justify-content:center; z-index:100; font-size:22px; border:4px dashed var(--accent)}
+#dropOverlay.show{display:flex}
+#ctxMenu{position:fixed; z-index:120; background:#fff; border:1px solid var(--line); border-radius:8px; box-shadow:0 8px 28px rgba(0,0,0,.22); min-width:230px; padding:5px; display:none; font-size:13.5px}
+#ctxMenu button{display:block; width:100%; text-align:left; background:none; border:0; padding:7px 12px; border-radius:5px; cursor:pointer}
+#ctxMenu button:hover{background:#eef2f5}
+#ctxMenu hr{border:0; border-top:1px solid var(--line); margin:4px 0}
+#ctxMenu .k{float:right; color:var(--ink2); font-size:12px}
+dialog{border:1px solid var(--line); border-radius:10px; padding:0; max-width:560px; width:92vw}
+dialog::backdrop{background:rgba(22,34,46,.5)}
+dialog header{display:flex; justify-content:space-between; align-items:center; padding:12px 16px; background:var(--ink); color:#fff; font-weight:600}
+dialog header button{background:none; border:0; color:#9fb2c2; font-size:18px; cursor:pointer}
+dialog .body{padding:16px; max-height:65vh; overflow-y:auto}
+dialog .row{display:flex; gap:10px; align-items:center; margin-bottom:12px; flex-wrap:wrap}
+dialog table{border-collapse:collapse; width:100%; font-size:13px}
+dialog td{padding:5px 8px; border-bottom:1px solid #eef1f4}
+dialog td:first-child{color:var(--ink2); white-space:nowrap}
+#toast{position:fixed; bottom:26px; left:50%; transform:translateX(-50%); background:var(--ink); color:#fff; padding:9px 18px; border-radius:8px; z-index:150; opacity:0; transition:opacity .2s; pointer-events:none; max-width:80vw}
+#toast.show{opacity:1}
+.legend{display:flex; gap:14px; align-items:center; font-size:12px; color:var(--ink2)}
+.legend i{display:inline-block; width:12px; height:3px; border-radius:2px; margin-right:4px; vertical-align:middle}
+@media (max-width:900px){ #searchbox input{width:100px} .pane-head input[type=range]{width:80px} }
+@media (prefers-reduced-motion: reduce){ *{transition:none !important} }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <div id="logo">
+    <span>Fennec&nbsp;Trace</span>
+    <span class="dots"><span style="background:var(--A)"></span><span style="background:var(--C)"></span><span style="background:#aab6c0"></span><span style="background:var(--T)"></span></span>
+    <small>AB1 viewer</small>
+  </div>
+  <button class="btn primary" id="openBtn">Open AB1…</button>
+  <input type="file" id="fileInput" accept=".ab1,.abi,.fsa" multiple hidden>
+  <div id="searchbox" title="Find a motif (IUPAC codes allowed, both strands searched)">
+    <input type="text" id="searchInput" class="mono" placeholder="Find motif e.g. GGYCGG" spellcheck="false">
+    <span id="searchCount">–</span>
+    <button class="mini" id="searchPrev" title="Previous match (Shift+F3)">▲</button>
+    <button class="mini" id="searchNext" title="Next match (F3)">▼</button>
+  </div>
+  <div class="grow"></div>
+  <button class="btn" id="exportBtn">Export</button>
+  <button class="btn" id="settingsBtn">Settings</button>
+  <button class="btn" id="helpBtn">Help</button>
+</div>
+
+<div id="tabstrip">
+  <div id="tabs" style="display:flex;gap:4px"></div>
+  <button class="tbtn" id="splitBtn" title="Show two reads stacked (e.g. forward + reverse)">Split view</button>
+</div>
+
+<div id="panes"></div>
+
+<div id="dropOverlay">Drop .ab1 files anywhere to open them</div>
+<div id="ctxMenu"></div>
+<div id="toast"></div>
+
+<dialog id="exportDlg">
+  <header>Export <button data-close>✕</button></header>
+  <div class="body">
+    <div class="row">Scope:
+      <label><input type="radio" name="expScope" value="trimmed" checked> Trimmed read</label>
+      <label><input type="radio" name="expScope" value="full"> Full read</label>
+      <label><input type="radio" name="expScope" value="selection"> Selection</label>
+    </div>
+    <div class="row">
+      <button class="btn primary" id="expFasta">FASTA</button>
+      <button class="btn primary" id="expFastq">FASTQ</button>
+      <button class="btn primary" id="expPng">PNG of visible trace</button>
+    </div>
+    <p style="color:var(--ink2);font-size:12.5px">Exports use the orientation currently displayed (reverse-complemented if flipped). PNG captures the visible window of the focused pane at 2× resolution.</p>
+  </div>
+</dialog>
+
+<dialog id="settingsDlg">
+  <header>Settings <button data-close>✕</button></header>
+  <div class="body">
+    <div class="row"><label style="width:100%">Heterozygote secondary-peak threshold: <b id="hetThrVal">30%</b>
+      <input type="range" id="hetThr" min="10" max="60" value="30" style="width:100%"></label></div>
+    <div class="row"><label style="width:100%">Trim quality cutoff (Mott, error prob): <b id="trimQVal">Q17 (p=0.02)</b>
+      <input type="range" id="trimQ" min="10" max="30" value="17" style="width:100%"></label></div>
+    <div class="row"><label><input type="checkbox" id="showHets" checked> Mark heterozygote candidates (IUPAC, orange flag)</label></div>
+    <div class="row"><label><input type="checkbox" id="showTrim" checked> Shade low-quality 5′/3′ trimmed regions</label></div>
+    <div class="row"><label><input type="checkbox" id="showQual" checked> Show Phred quality bars</label></div>
+  </div>
+</dialog>
+
+<dialog id="infoDlg">
+  <header>Run information <button data-close>✕</button></header>
+  <div class="body"><table id="infoTable"></table></div>
+</dialog>
+
+<dialog id="helpDlg">
+  <header>Help <button data-close>✕</button></header>
+  <div class="body" style="font-size:13.5px; line-height:1.55">
+    <p><b>Open files</b> — drag &amp; drop anywhere, use <i>Open AB1…</i>, or (installed as an app) double-click .ab1 files in Windows Explorer.</p>
+    <p><b>Select</b> — click/drag on the trace. <span class="mono">Ctrl+A</span> selects the whole read, <span class="mono">Ctrl+C</span> copies the selected sequence. Arrow keys move the cursor, <span class="mono">Shift+arrows</span> extend, <span class="mono">Home/End</span> jump.</p>
+    <p><b>Right-click a selection</b> — BLAST it (opens NCBI blastn), copy it plain / FASTA / reverse-complement.</p>
+    <p><b>Flip (RC)</b> — reverse-complements traces, bases, qualities and numbering, so a reverse read is analyzed as forward. Exports follow the displayed orientation.</p>
+    <p><b>Sliders</b> — H zoom stretches the trace horizontally; V zoom scales peak height.</p>
+    <p><b>Quality</b> — bars above each base are Phred scores (amber &lt; Q20). Gray shading marks the low-quality 5′/3′ ends (Mott trimming). Hover a base to read its exact Q in the status bar.</p>
+    <p><b>Het candidates</b> — positions where a secondary peak exceeds the threshold are flagged in orange with their IUPAC code; open the list with the <i>Het</i> button and click an entry to jump there.</p>
+    <p><b>Search</b> — IUPAC motifs allowed (R, Y, S, W, K, M, B, D, H, V, N); both strands are searched. <span class="mono">Enter/F3</span> next, <span class="mono">Shift+F3</span> previous.</p>
+    <p><b>Split view</b> — stack two panes to compare forward and reverse reads of the same amplicon.</p>
+  </div>
+</dialog>
+
+<script>
+"use strict";
+/* ============================================================
+   ABIF (.ab1) parser — big-endian binary
+   ============================================================ */
+function parseABIF(buf, fname){
+  const dv = new DataView(buf);
+  const str4 = o => String.fromCharCode(dv.getUint8(o),dv.getUint8(o+1),dv.getUint8(o+2),dv.getUint8(o+3));
+  if (str4(0) !== "ABIF") throw new Error(fname+": not an ABIF/AB1 file (bad signature)");
+  const numEntries = dv.getInt32(18), dirOffset = dv.getInt32(26);
+  const entries = {};
+  for (let i=0;i<numEntries;i++){
+    const o = dirOffset + i*28;
+    const name = str4(o), num = dv.getInt32(o+4);
+    entries[name+num] = { type: dv.getInt16(o+8), size: dv.getInt16(o+10),
+      n: dv.getInt32(o+12), dataSize: dv.getInt32(o+16),
+      off: dv.getInt32(o+16) <= 4 ? o+20 : dv.getInt32(o+20) };
+  }
+  function read(tag){
+    const e = entries[tag]; if (!e) return null;
+    const {type,n,off} = e;
+    switch(type){
+      case 1: { const a=new Uint8Array(n); for(let k=0;k<n;k++)a[k]=dv.getUint8(off+k); return a; }
+      case 2: { let s=""; for(let k=0;k<n;k++)s+=String.fromCharCode(dv.getUint8(off+k)); return s; }
+      case 4: { const a=new Int16Array(n); for(let k=0;k<n;k++)a[k]=dv.getInt16(off+2*k); return a; }
+      case 5: { const a=new Int32Array(n); for(let k=0;k<n;k++)a[k]=dv.getInt32(off+4*k); return a; }
+      case 7: { const a=new Float32Array(n); for(let k=0;k<n;k++)a[k]=dv.getFloat32(off+4*k); return a; }
+      case 10:{ return `${dv.getInt16(off)}-${String(dv.getUint8(off+2)).padStart(2,"0")}-${String(dv.getUint8(off+3)).padStart(2,"0")}`; }
+      case 11:{ return `${String(dv.getUint8(off)).padStart(2,"0")}:${String(dv.getUint8(off+1)).padStart(2,"0")}:${String(dv.getUint8(off+2)).padStart(2,"0")}`; }
+      case 18:{ const L=dv.getUint8(off); let s=""; for(let k=0;k<L;k++)s+=String.fromCharCode(dv.getUint8(off+1+k)); return s; }
+      case 19:{ let s=""; for(let k=0;k<n-1;k++){const c=dv.getUint8(off+k); if(!c)break; s+=String.fromCharCode(c);} return s; }
+      default: return null;
+    }
+  }
+  const fwo = read("FWO_1") || "GATC";
+  const chans = [read("DATA9"),read("DATA10"),read("DATA11"),read("DATA12")];
+  if (chans.some(c=>!c)) throw new Error(fname+": analyzed trace data (DATA9–12) missing");
+  const traces = {};
+  for (let i=0;i<4;i++) traces[fwo[i]] = chans[i];
+  const seq  = (read("PBAS2") || read("PBAS1") || "").toUpperCase().replace(/[^A-Z*-]/g,"N");
+  const ploc = read("PLOC2") || read("PLOC1");
+  const pcon = read("PCON2") || read("PCON1");
+  if (!seq || !ploc) throw new Error(fname+": base calls (PBAS/PLOC) missing");
+  const L = Math.min(seq.length, ploc.length);
+  const qual = new Uint8Array(L);
+  if (typeof pcon === "string") for (let i=0;i<L;i++) qual[i] = pcon.charCodeAt(i)||0;
+  else if (pcon) for (let i=0;i<L;i++) qual[i] = pcon[i];
+  const nPoints = traces.A.length;
+  // robust normalization value: 98th percentile of all channel values
+  const sample = [];
+  for (const b of "ACGT"){ const t=traces[b]; const step=Math.max(1,Math.floor(t.length/2000));
+    for (let i=0;i<t.length;i+=step) sample.push(t[i]); }
+  sample.sort((x,y)=>x-y);
+  const p98 = Math.max(50, sample[Math.floor(sample.length*0.98)] || 100);
+  const rd = read("RUND1"), rt = read("RUNT1");
+  const meta = {
+    "File": fname,
+    "Sample name": read("SMPL1") || "—",
+    "Instrument model": (read("MODL1")||"—").toString().trim(),
+    "Machine name": read("MCHN1") || "—",
+    "Dye set": read("DySN1") || "—",
+    "Lane / capillary": (read("LANE1")||["—"])[0],
+    "Run started": rd ? rd + (rt? " "+rt : "") : "—",
+    "Trace points": nPoints,
+    "Called bases": L,
+  };
+  return { name:fname, traces, fwo, seq:seq.slice(0,L), qual, ploc:ploc.slice(0,L), nPoints, p98, meta };
+}
+
+/* ============================================================
+   Sequence utilities
+   ============================================================ */
+const COMP = {A:"T",T:"A",G:"C",C:"G",N:"N",R:"Y",Y:"R",S:"S",W:"W",K:"M",M:"K",B:"V",V:"B",D:"H",H:"D","*":"*","-":"-"};
+const IUPAC2 = {AC:"M",AG:"R",AT:"W",CG:"S",CT:"Y",GT:"K"};
+const IUPAC_RX = {A:"A",C:"C",G:"G",T:"T",U:"T",R:"[AG]",Y:"[CT]",S:"[GC]",W:"[AT]",K:"[GT]",M:"[AC]",B:"[CGT]",D:"[AGT]",H:"[ACT]",V:"[ACG]",N:"[ACGT]"};
+const revcomp = s => s.split("").reverse().map(c=>COMP[c]||"N").join("");
+
+function makeView(file, rc){
+  if (!rc) {
+    if (!file._fwd) file._fwd = finishView({
+      seq:file.seq, qual:file.qual, ploc:file.ploc, traces:file.traces,
+      nPoints:file.nPoints, p98:file.p98, name:file.name, rc:false });
+    return file._fwd;
+  }
+  if (file._rc) return file._rc;
+  const N = file.nPoints, L = file.seq.length;
+  const traces = {};
+  for (const b of "ACGT"){
+    const src = file.traces[b], dst = new Int16Array(N);
+    for (let i=0;i<N;i++) dst[i] = src[N-1-i];
+    traces[COMP[b]] = dst;
+  }
+  const seq = revcomp(file.seq);
+  const qual = new Uint8Array(L), ploc = new Int32Array(L);
+  for (let i=0;i<L;i++){ qual[i]=file.qual[L-1-i]; ploc[i]=N-1-file.ploc[L-1-i]; }
+  file._rc = finishView({seq,qual,ploc,traces,nPoints:N,p98:file.p98,name:file.name,rc:true});
+  return file._rc;
+}
+function finishView(v){ v.trim = mottTrim(v.qual, settings.trimQ); v.hets = findHets(v, settings.hetThr); return v; }
+function invalidateViews(f){ f._fwd = f._rc = null; }
+
+/* Mott trimming: max-sum segment of (cutoff - errProb) */
+function mottTrim(qual, qCut){
+  const cutoff = Math.pow(10, -qCut/10);
+  let best=0, bestS=0, bestE=-1, run=0, runS=0;
+  for (let i=0;i<qual.length;i++){
+    run += cutoff - Math.pow(10, -qual[i]/10);
+    if (run < 0){ run=0; runS=i+1; }
+    else if (run > best){ best=run; bestS=runS; bestE=i; }
+  }
+  return bestE < bestS ? [0,-1] : [bestS,bestE];
+}
+
+/* Heterozygote candidates: secondary peak ratio at each called position */
+function findHets(view, thrPct){
+  const thr = thrPct/100, out=[], W=3, floor = view.p98*0.06;
+  const L = view.seq.length;
+  for (let i=0;i<L;i++){
+    const p = view.ploc[i], lo=Math.max(0,p-W), hi=Math.min(view.nPoints-1,p+W);
+    let b1=null,v1=-1,b2=null,v2=-1;
+    for (const b of "ACGT"){
+      let m=0; const t=view.traces[b];
+      for (let k=lo;k<=hi;k++) if (t[k]>m) m=t[k];
+      if (m>v1){ v2=v1;b2=b1; v1=m;b1=b; } else if (m>v2){ v2=m;b2=b; }
+    }
+    if (v1>floor && v2/v1 >= thr){
+      const pair=[b1,b2].sort().join("");
+      out.push({ i, code: IUPAC2[pair]||"N", bases:pair, ratio:v2/v1 });
+    }
+  }
+  return out;
+}
+
+/* ============================================================
+   Global state
+   ============================================================ */
+const settings = { hetThr:30, trimQ:17, showHets:true, showTrim:true, showQual:true };
+const files = [];               // parsed files
+let activeTab = -1;             // file index shown in pane 0
+const panes = [];               // Viewer instances
+let focusedPane = null;
+const COLORS = {A:getCSS("--A"),C:getCSS("--C"),G:getCSS("--G"),T:getCSS("--T")};
+function getCSS(v){ return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+const $ = s => document.querySelector(s);
+function toast(msg){ const t=$("#toast"); t.textContent=msg; t.classList.add("show"); clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove("show"),2600); }
+
+/* ============================================================
+   Viewer pane
+   ============================================================ */
+class Viewer{
+  constructor(root){
+    this.root = root; this.fileIdx = -1; this.rc = false;
+    this.xs = 2.0; this.ys = 1.0; this.sel = null; this.caret = 0;
+    this.matches = []; this.matchIdx = -1; this.hoverBase = -1;
+    this.build();
+  }
+  get file(){ return files[this.fileIdx] || null; }
+  get view(){ return this.file ? makeView(this.file, this.rc) : null; }
+
+  build(){
+    const r = this.root;
+    r.innerHTML = `
+      <div class="pane-head">
+        <select class="fileSel tbtn" title="File shown in this pane"></select>
+        <button class="tbtn rcBtn" title="Reverse-complement: analyze this read as forward">Flip&nbsp;⇄&nbsp;RC</button>
+        <label>H&nbsp;zoom <input type="range" class="xsr" min="40" max="600" value="200" title="Horizontal scale"></label>
+        <label>V&nbsp;zoom <input type="range" class="ysr" min="15" max="500" value="100" title="Vertical scale"></label>
+        <button class="tbtn hetBtn" title="Heterozygote candidate list">Het <span class="hetCount">0</span></button>
+        <button class="tbtn infoBtn" title="Run information">Info</button>
+        <span class="legend"><span><i style="background:var(--A)"></i>A</span><span><i style="background:var(--C)"></i>C</span><span><i style="background:var(--G)"></i>G</span><span><i style="background:var(--T)"></i>T</span></span>
+      </div>
+      <div class="canvasHolder" tabindex="0"><canvas></canvas></div>
+      <div class="hetPanel"><h4>Heterozygote candidates <span style="float:right;color:var(--ink2)">(in trimmed region)</span></h4><div class="list"></div></div>
+      <div class="minimap"><canvas></canvas></div>
+      <div class="hscroll"><div></div></div>
+      <div class="statusbar"><span class="sPos">–</span><span class="sSel">no selection</span><span class="sQ"></span><span class="sTrim"></span><span class="sRc"></span></div>`;
+    this.holder = r.querySelector(".canvasHolder");
+    this.cv = r.querySelector(".canvasHolder canvas");
+    this.ctx = this.cv.getContext("2d");
+    this.mm = r.querySelector(".minimap canvas");
+    this.mmx = this.mm.getContext("2d");
+    this.hs = r.querySelector(".hscroll");
+    this.spacer = this.hs.firstElementChild;
+    this.fileSel = r.querySelector(".fileSel");
+
+    // events
+    this.fileSel.onchange = () => { this.setFile(+this.fileSel.value); };
+    r.querySelector(".rcBtn").onclick = e => { this.rc=!this.rc; e.target.classList.toggle("on",this.rc); this.sel=null; this.caret=0; this.hs.scrollLeft=0; this.refresh(true); };
+    const xsr=r.querySelector(".xsr"), ysr=r.querySelector(".ysr");
+    xsr.oninput = () => { const mid=this.centerPoint(); this.xs=+xsr.value/100; this.updateSpacer(); this.centerOn(mid); this.render(); };
+    ysr.oninput = () => { this.ys=+ysr.value/100; this.render(); };
+    r.querySelector(".hetBtn").onclick = () => r.querySelector(".hetPanel").classList.toggle("open");
+    r.querySelector(".infoBtn").onclick = () => this.showInfo();
+    this.hs.onscroll = () => requestAnimationFrame(()=>{ this.render(); this.renderMinimap(); });
+    new ResizeObserver(()=>this.refresh()).observe(this.holder);
+
+    // pointer interaction
+    this.holder.addEventListener("wheel", e=>{ e.preventDefault();
+      if (e.ctrlKey){ // ctrl+wheel = H zoom around cursor
+        const mid=this.pointAtX(e.offsetX);
+        this.xs=Math.min(6,Math.max(.4,this.xs*(e.deltaY<0?1.15:0.87)));
+        xsr.value=Math.round(this.xs*100); this.updateSpacer(); this.centerOn(mid,e.offsetX); this.render();
+      } else this.hs.scrollLeft += (e.deltaY||e.deltaX);
+    }, {passive:false});
+    this.holder.addEventListener("mousedown", e=>{
+      setFocus(this); this.holder.focus();
+      if (e.button!==0) return;
+      const b=this.baseAtX(e.offsetX); if(b<0)return;
+      this.dragging=true; this.anchor=b; this.sel=[b,b]; this.caret=b; this.render(); this.status();
+    });
+    window.addEventListener("mousemove", e=>{
+      if(!this.dragging) return;
+      const rect=this.holder.getBoundingClientRect();
+      const x=e.clientX-rect.left;
+      if (x<20) this.hs.scrollLeft-=25; else if (x>rect.width-20) this.hs.scrollLeft+=25;
+      const b=this.baseAtX(Math.min(rect.width-1,Math.max(0,x)));
+      if(b>=0){ this.sel=[Math.min(this.anchor,b),Math.max(this.anchor,b)]; this.caret=b; this.render(); this.status(); }
+    });
+    window.addEventListener("mouseup", ()=>this.dragging=false);
+    this.holder.addEventListener("mousemove", e=>{
+      const b=this.baseAtX(e.offsetX); if(b!==this.hoverBase){ this.hoverBase=b; this.status(); }
+    });
+    this.holder.addEventListener("contextmenu", e=>{ e.preventDefault(); setFocus(this); openCtxMenu(e.clientX,e.clientY,this); });
+    this.holder.addEventListener("keydown", e=>this.keys(e));
+    this.holder.addEventListener("dblclick", ()=>{ const v=this.view; if(!v)return; this.sel=[v.trim[0],v.trim[1]]; this.render(); this.status(); toast("Trimmed region selected"); });
+    this.mm.parentElement.addEventListener("mousedown", e=>{ this.mmSeek(e); const mv=ev=>this.mmSeek(ev); const up=()=>{window.removeEventListener("mousemove",mv);window.removeEventListener("mouseup",up);}; window.addEventListener("mousemove",mv); window.addEventListener("mouseup",up); });
+  }
+
+  setFile(idx){
+    this.fileIdx = idx; this.rc=false; this.sel=null; this.caret=0; this.matches=[]; this.matchIdx=-1;
+    this.root.querySelector(".rcBtn").classList.remove("on");
+    const f=this.file;
+    if (f){ this.ys=1; this.root.querySelector(".ysr").value=100; }
+    this.hs.scrollLeft=0; this.refresh(true);
+  }
+  refresh(recount){
+    this.syncFileSel();
+    if (recount) this.updateSpacer();
+    this.render(); this.renderMinimap(); this.renderHetList(); this.status();
+  }
+  syncFileSel(){
+    this.fileSel.innerHTML = files.map((f,i)=>`<option value="${i}" ${i===this.fileIdx?"selected":""}>${esc(f.name)}</option>`).join("") || `<option>— no file —</option>`;
+  }
+  updateSpacer(){ const v=this.view; this.spacer.style.width = v ? Math.ceil(v.nPoints*this.xs)+"px" : "0"; }
+  centerPoint(){ return (this.hs.scrollLeft + this.holder.clientWidth/2)/this.xs; }
+  centerOn(pt, px){ this.hs.scrollLeft = Math.max(0, pt*this.xs - (px??this.holder.clientWidth/2)); }
+  pointAtX(x){ return (this.hs.scrollLeft + x)/this.xs; }
+  baseAtX(x){
+    const v=this.view; if(!v||!v.ploc.length) return -1;
+    const p=this.pointAtX(x);
+    let lo=0, hi=v.ploc.length-1;                       // nearest base by peak location
+    while(lo<hi){ const m=(lo+hi)>>1; v.ploc[m]<p ? lo=m+1 : hi=m; }
+    if (lo>0 && Math.abs(v.ploc[lo-1]-p)<Math.abs(v.ploc[lo]-p)) lo--;
+    return lo;
+  }
+  keys(e){
+    const v=this.view; if(!v) return;
+    const L=v.seq.length;
+    const mv=d=>{ this.caret=Math.min(L-1,Math.max(0,this.caret+d));
+      if(e.shiftKey){ if(!this.sel){this.anchor=this.caret-d; } this.sel=[Math.min(this.anchor,this.caret),Math.max(this.anchor,this.caret)]; }
+      else { this.sel=[this.caret,this.caret]; this.anchor=this.caret; }
+      this.scrollToBase(this.caret); this.render(); this.status(); };
+    if (e.key==="ArrowRight"){ e.preventDefault(); mv(1); }
+    else if (e.key==="ArrowLeft"){ e.preventDefault(); mv(-1); }
+    else if (e.key==="Home"){ e.preventDefault(); this.caret=0; this.anchor=0; this.sel=e.shiftKey?[0,this.sel?this.sel[1]:0]:[0,0]; this.scrollToBase(0); this.render(); this.status(); }
+    else if (e.key==="End"){ e.preventDefault(); this.caret=L-1; this.sel=e.shiftKey?[this.sel?this.sel[0]:L-1,L-1]:[L-1,L-1]; this.scrollToBase(L-1); this.render(); this.status(); }
+    else if ((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==="a"){ e.preventDefault(); this.sel=[0,L-1]; this.render(); this.status(); }
+    else if ((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==="c"){ e.preventDefault(); copyText(this.selSeq()||v.seq, "Sequence copied"); }
+  }
+  scrollToBase(i){
+    const v=this.view, x=v.ploc[i]*this.xs, sl=this.hs.scrollLeft, w=this.holder.clientWidth;
+    if (x<sl+40||x>sl+w-40) this.hs.scrollLeft=Math.max(0,x-w/2);
+  }
+  selSeq(){ const v=this.view; return (v&&this.sel)? v.seq.slice(this.sel[0],this.sel[1]+1):""; }
+
+  /* -------- main canvas -------- */
+  render(){
+    const v=this.view, dpr=window.devicePixelRatio||1;
+    const W=this.holder.clientWidth, H=this.holder.clientHeight;
+    if (this.cv.width!==W*dpr||this.cv.height!==H*dpr){ this.cv.width=W*dpr; this.cv.height=H*dpr; }
+    const g=this.ctx; g.setTransform(dpr,0,0,dpr,0,0);
+    g.fillStyle="#fff"; g.fillRect(0,0,W,H);
+    if(!v){ return; }
+    const sl=this.hs.scrollLeft;
+    const p0=Math.max(0,Math.floor(sl/this.xs)-2), p1=Math.min(v.nPoints-1,Math.ceil((sl+W)/this.xs)+2);
+
+    // layout
+    const rulerH=16, qualH=settings.showQual?42:0, baseH=20;
+    const traceTop=rulerH+qualH+baseH+4, traceBot=H-6, traceH=traceBot-traceTop;
+
+    // base index range visible
+    let b0=this.baseAtX(0), b1=this.baseAtX(W); if(b0<0)b0=0; if(b1<0)b1=v.seq.length-1;
+    while(b0>0 && v.ploc[b0]>=p0) b0--; while(b1<v.seq.length-1 && v.ploc[b1]<=p1) b1++;
+
+    const X=p=>p*this.xs-sl;
+    const halfBase=Math.max(3, (v.ploc[1]?(v.nPoints/v.seq.length):12)*this.xs/2);
+
+    // trim shading
+    if (settings.showTrim && v.trim[1]>=v.trim[0]){
+      g.fillStyle=getCSS("--trim");
+      const xs5=v.trim[0]>0 ? X(v.ploc[v.trim[0]])-halfBase : 0;
+      if (v.trim[0]>0 && xs5>0) g.fillRect(0,0,xs5,H);
+      const xe3=v.trim[1]<v.seq.length-1 ? X(v.ploc[v.trim[1]])+halfBase : W;
+      if (v.trim[1]<v.seq.length-1 && xe3<W) g.fillRect(xe3,0,W-xe3,H);
+    }
+    // motif matches
+    if (this.matches.length){
+      g.fillStyle=getCSS("--motif");
+      for (const m of this.matches){
+        if (m.e<b0||m.s>b1) continue;
+        const x1=X(v.ploc[m.s])-halfBase, x2=X(v.ploc[m.e])+halfBase;
+        g.fillRect(x1,0,x2-x1,H);
+      }
+    }
+    // selection
+    if (this.sel){
+      g.fillStyle=getCSS("--sel");
+      const x1=X(v.ploc[this.sel[0]])-halfBase, x2=X(v.ploc[this.sel[1]])+halfBase;
+      g.fillRect(x1,0,x2-x1,H);
+    }
+
+    // traces (per-pixel max to keep peaks at any zoom)
+    const scale = traceH/(v.p98*1.15)*this.ys;
+    for (const b of "ACGT"){
+      const t=v.traces[b];
+      g.strokeStyle=COLORS[b]; g.lineWidth=1.1; g.beginPath();
+      if (this.xs>=1){
+        for (let p=p0;p<=p1;p++){
+          const y=traceBot-Math.min(traceH,t[p]*scale);
+          p===p0 ? g.moveTo(X(p),y) : g.lineTo(X(p),y);
+        }
+      } else {
+        for (let px=0;px<=W;px++){
+          const a=Math.max(0,Math.floor((sl+px)/this.xs)), z=Math.min(v.nPoints-1,Math.floor((sl+px+1)/this.xs));
+          let m=0; for(let k=a;k<=z;k++) if(t[k]>m)m=t[k];
+          const y=traceBot-Math.min(traceH,m*scale);
+          px===0 ? g.moveTo(px,y) : g.lineTo(px,y);
+        }
+      }
+      g.stroke();
+    }
+
+    // per-base annotations
+    const hetSet = settings.showHets ? new Map(v.hets.map(h=>[h.i,h])) : new Map();
+    const letters = halfBase*2 >= 7;
+    g.textAlign="center";
+    for (let i=b0;i<=b1;i++){
+      const x=X(v.ploc[i]);
+      // ruler
+      if ((i+1)%10===0||i===0){
+        g.fillStyle="#8a97a2"; g.font="10px system-ui"; g.fillText(i+1, x, 11);
+        g.strokeStyle="#c9d2d9"; g.lineWidth=1; g.beginPath(); g.moveTo(x,13); g.lineTo(x,rulerH); g.stroke();
+      }
+      // quality bar
+      if (settings.showQual){
+        const q=v.qual[i], h=Math.max(1,Math.min(60,q)/60*(qualH-6));
+        g.fillStyle = q>=20 ? "#9fb6c9" : "#f2b04c";
+        g.fillRect(x-Math.min(3,halfBase*0.5), rulerH+qualH-2-h, Math.min(6,halfBase), h);
+      }
+      // base letter
+      const het=hetSet.get(i);
+      if (letters){
+        g.font="bold 13px ui-monospace,Consolas,monospace";
+        if (het){
+          g.fillStyle=getCSS("--het"); g.fillRect(x-halfBase*0.9, rulerH+qualH+2, halfBase*1.8, baseH-4);
+          g.fillStyle=getCSS("--amb"); g.fillText(het.code, x, rulerH+qualH+baseH-5);
+        } else {
+          g.fillStyle=COLORS[v.seq[i]]||getCSS("--amb");
+          g.fillText(v.seq[i], x, rulerH+qualH+baseH-5);
+        }
+      } else if (het){
+        g.fillStyle=getCSS("--het"); g.fillRect(x-1, rulerH+qualH+2, 3, baseH-4);
+      }
+      // caret
+      if (this.sel && i===this.caret && document.activeElement===this.holder){
+        g.strokeStyle=getCSS("--accent"); g.lineWidth=1.4;
+        g.beginPath(); g.moveTo(x,rulerH+qualH); g.lineTo(x,H-4); g.stroke();
+      }
+    }
+  }
+
+  /* -------- minimap -------- */
+  renderMinimap(){
+    const v=this.view, dpr=window.devicePixelRatio||1;
+    const W=this.mm.parentElement.clientWidth, H=30;
+    this.mm.width=W*dpr; this.mm.height=H*dpr;
+    const g=this.mmx; g.setTransform(dpr,0,0,dpr,0,0);
+    g.clearRect(0,0,W,H);
+    if(!v) return;
+    const L=v.seq.length;
+    for (let px=0;px<W;px++){
+      const a=Math.floor(px/W*L), z=Math.max(a,Math.floor((px+1)/W*L)-1);
+      let s=0,n=0; for(let k=a;k<=z;k++){s+=v.qual[k];n++;}
+      const q=n?s/n:0;
+      g.fillStyle = q>=30?"#7fae8f" : q>=20?"#cdd9a8" : "#e8b46b";
+      g.fillRect(px,8,1,H-10);
+    }
+    // trim bounds
+    g.fillStyle="rgba(90,100,110,.35)";
+    g.fillRect(0,8,v.trim[0]/L*W,H-10);
+    g.fillRect(v.trim[1]/L*W,8,W-v.trim[1]/L*W,H-10);
+    // hets
+    if (settings.showHets){ g.fillStyle=getCSS("--het");
+      for (const h of v.hets) if(h.i>=v.trim[0]&&h.i<=v.trim[1]) g.fillRect(h.i/L*W-1,2,2,5); }
+    // viewport
+    const sl=this.hs.scrollLeft, w=this.holder.clientWidth, tot=v.nPoints*this.xs;
+    g.strokeStyle=getCSS("--accent"); g.lineWidth=1.6;
+    g.strokeRect(sl/tot*W, 7, Math.max(6,w/tot*W), H-8);
+  }
+  mmSeek(e){
+    const v=this.view; if(!v)return;
+    const rect=this.mm.parentElement.getBoundingClientRect();
+    const frac=Math.min(1,Math.max(0,(e.clientX-rect.left)/rect.width));
+    this.hs.scrollLeft = frac*v.nPoints*this.xs - this.holder.clientWidth/2;
+  }
+
+  renderHetList(){
+    const v=this.view, list=this.root.querySelector(".hetPanel .list");
+    const btn=this.root.querySelector(".hetCount");
+    if(!v){ list.innerHTML=""; btn.textContent="0"; return; }
+    const hs=v.hets.filter(h=>h.i>=v.trim[0]&&h.i<=v.trim[1]);
+    btn.textContent=hs.length;
+    list.innerHTML = hs.map(h=>`<div class="hetItem" data-i="${h.i}"><span class="code mono">${h.code}</span><span class="mono">${h.bases[0]}/${h.bases[1]}</span><span class="pos">pos ${h.i+1}</span><span class="pos">${Math.round(h.ratio*100)}%</span></div>`).join("")
+      || `<div style="padding:12px;color:var(--ink2);font-size:12.5px">No secondary peaks ≥ ${settings.hetThr}% in the trimmed region.</div>`;
+    list.querySelectorAll(".hetItem").forEach(el=>el.onclick=()=>{
+      const i=+el.dataset.i; this.sel=[i,i]; this.caret=i; this.anchor=i;
+      this.hs.scrollLeft = Math.max(0, v.ploc[i]*this.xs - this.holder.clientWidth/2);
+      this.holder.focus(); this.render(); this.status();
+    });
+  }
+
+  status(){
+    const v=this.view, r=this.root;
+    const q=r.querySelector(".sQ"), sp=r.querySelector(".sPos"), ss=r.querySelector(".sSel"), st=r.querySelector(".sTrim"), sr=r.querySelector(".sRc");
+    if(!v){ sp.textContent="–"; ss.textContent=""; q.textContent=""; st.textContent=""; sr.textContent=""; return; }
+    const hb=this.hoverBase;
+    sp.innerHTML = hb>=0 ? `pos <b>${hb+1}</b>/${v.seq.length} &nbsp; base <b class="mono">${v.seq[hb]}</b> &nbsp; Q<b>${v.qual[hb]}</b>` : `${v.seq.length} bases`;
+    ss.innerHTML = this.sel ? `selection <b>${this.sel[0]+1}–${this.sel[1]+1}</b> (${this.sel[1]-this.sel[0]+1} nt)` : "no selection";
+    const inTrim=v.qual.slice(v.trim[0],v.trim[1]+1);
+    const q20=inTrim.length?Math.round(100*inTrim.filter(x=>x>=20).length/inTrim.length):0;
+    st.innerHTML=`trimmed <b>${v.trim[0]+1}–${v.trim[1]+1}</b> · Q20 ${q20}%`;
+    sr.innerHTML=this.rc?`<b style="color:var(--accent)">reverse-complement view</b>`:"forward view";
+  }
+  showInfo(){
+    const f=this.file; if(!f) return;
+    $("#infoTable").innerHTML = Object.entries(f.meta).map(([k,v])=>`<tr><td>${esc(k)}</td><td class="mono">${esc(String(v))}</td></tr>`).join("")
+      + `<tr><td>Mean Q (trimmed)</td><td class="mono">${meanQ(this.view)}</td></tr>`;
+    $("#infoDlg").showModal();
+  }
+}
+function meanQ(v){ const s=v.qual.slice(v.trim[0],v.trim[1]+1); return s.length?(s.reduce((a,b)=>a+b,0)/s.length).toFixed(1):"–"; }
+function esc(s){ return s.replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+
+/* ============================================================
+   Layout: tabs / panes
+   ============================================================ */
+function addPane(){
+  const el=document.createElement("div"); el.className="pane";
+  $("#panes").appendChild(el);
+  const v=new Viewer(el); panes.push(v);
+  el.addEventListener("mousedown",()=>setFocus(v));
+  return v;
+}
+function setFocus(v){ focusedPane=v; panes.forEach(p=>p.root.classList.toggle("focused",p===v&&panes.length>1)); }
+function renderTabs(){
+  $("#tabs").innerHTML = files.map((f,i)=>
+    `<div class="tab ${i===activeTab?"active":""}" data-i="${i}"><span>${esc(f.name)}</span><button class="x" title="Close" data-x="${i}">×</button></div>`).join("");
+  $("#tabs").querySelectorAll(".tab").forEach(t=>{
+    t.onclick=e=>{ if(e.target.dataset.x!==undefined) return; activeTab=+t.dataset.i; panes[0].setFile(activeTab); renderTabs(); };
+  });
+  $("#tabs").querySelectorAll("[data-x]").forEach(b=>b.onclick=()=>closeFile(+b.dataset.x));
+}
+function closeFile(i){
+  files.splice(i,1);
+  for (const p of panes){
+    if (p.fileIdx===i) p.fileIdx = files.length? Math.max(0,i-1) : -1;
+    else if (p.fileIdx>i) p.fileIdx--;
+  }
+  activeTab = panes[0].fileIdx;
+  panes.forEach(p=>p.refresh(true)); renderTabs(); ensureEmptyState();
+}
+function ensureEmptyState(){
+  const empty = files.length===0;
+  let ep=$("#emptyState");
+  if (empty && !ep){
+    ep=document.createElement("div"); ep.id="emptyState"; ep.className="emptyPane";
+    ep.innerHTML=`<div class="big">🦊</div><div>Drop <b>.ab1</b> files here, or</div><button class="btn primary" onclick="document.getElementById('fileInput').click()">Open AB1…</button>
+      <div style="font-size:12px;max-width:420px;text-align:center">Everything runs locally in your browser — chromatogram files never leave this computer.</div>`;
+    panes[0].root.querySelector(".canvasHolder").style.display="none";
+    panes[0].root.insertBefore(ep, panes[0].root.querySelector(".hetPanel"));
+  } else if (!empty && ep){ ep.remove(); panes[0].root.querySelector(".canvasHolder").style.display=""; }
+}
+
+/* ============================================================
+   File loading
+   ============================================================ */
+async function loadFiles(list){
+  let firstNew=-1;
+  for (const f of list){
+    try{
+      const buf=await f.arrayBuffer();
+      const parsed=parseABIF(buf, f.name);
+      files.push(parsed);
+      if(firstNew<0) firstNew=files.length-1;
+    }catch(err){ toast("⚠ "+err.message); console.error(err); }
+  }
+  if (firstNew>=0){
+    activeTab=firstNew; panes[0].setFile(firstNew);
+    if (panes.length>1 && files.length>1) panes[1].setFile(files.length-1===firstNew?Math.max(0,firstNew-1):files.length-1);
+    else if (panes.length>1) panes[1].setFile(firstNew);
+  }
+  renderTabs(); ensureEmptyState(); panes.forEach(p=>p.refresh(true));
+}
+$("#openBtn").onclick=()=>$("#fileInput").click();
+$("#fileInput").onchange=e=>{ loadFiles([...e.target.files]); e.target.value=""; };
+let dragDepth=0;
+window.addEventListener("dragenter",e=>{ e.preventDefault(); dragDepth++; $("#dropOverlay").classList.add("show"); });
+window.addEventListener("dragleave",e=>{ e.preventDefault(); if(--dragDepth<=0){dragDepth=0;$("#dropOverlay").classList.remove("show");} });
+window.addEventListener("dragover",e=>e.preventDefault());
+window.addEventListener("drop",e=>{ e.preventDefault(); dragDepth=0; $("#dropOverlay").classList.remove("show");
+  loadFiles([...e.dataTransfer.files].filter(f=>/\.(ab1|abi|fsa)$/i.test(f.name)||f.size>128)); });
+// PWA file handling (double-click .ab1 in Explorer once installed)
+if ("launchQueue" in window){
+  launchQueue.setConsumer(async p=>{ const fs=[]; for (const h of p.files||[]) fs.push(await h.getFile()); if(fs.length) loadFiles(fs); });
+}
+
+/* ============================================================
+   Context menu / clipboard / BLAST
+   ============================================================ */
+function copyText(txt,msg){
+  navigator.clipboard.writeText(txt).then(()=>toast(msg||"Copied"),()=>{ 
+    const ta=document.createElement("textarea"); ta.value=txt; document.body.appendChild(ta); ta.select();
+    document.execCommand("copy"); ta.remove(); toast(msg||"Copied");
+  });
+}
+function blastSeq(seq){
+  if(!seq){ toast("Nothing selected to BLAST"); return; }
+  if(seq.length>8000){ toast("Selection too long for a BLAST URL — copy it and paste on NCBI"); return; }
+  window.open("https://blast.ncbi.nlm.nih.gov/Blast.cgi?PROGRAM=blastn&PAGE_TYPE=BlastSearch&LINK_LOC=blasthome&QUERY="+encodeURIComponent(seq),"_blank");
+}
+function fastaName(p){ const v=p.view; return v.name.replace(/\.ab1$/i,"") + (p.rc?"_RC":""); }
+function openCtxMenu(x,y,p){
+  const v=p.view; if(!v) return;
+  const hasSel=!!p.sel && p.sel[1]>=p.sel[0];
+  const m=$("#ctxMenu");
+  m.innerHTML = `
+    ${hasSel?`<button data-a="blast"><b>BLAST selection</b> (blastn, NCBI) <span class="k">${p.sel[1]-p.sel[0]+1} nt</span></button>`:""}
+    <button data-a="blastTrim">BLAST trimmed read <span class="k">${v.trim[1]-v.trim[0]+1} nt</span></button>
+    <hr>
+    ${hasSel?`<button data-a="copy">Copy selection <span class="k">Ctrl+C</span></button>
+    <button data-a="copyRC">Copy selection, reverse-complement</button>
+    <button data-a="copyFa">Copy selection as FASTA</button><hr>`:""}
+    <button data-a="copyTrim">Copy trimmed read</button>
+    <button data-a="copyFull">Copy full read</button>
+    <hr>
+    <button data-a="selTrim">Select trimmed region <span class="k">dbl-click</span></button>
+    <button data-a="selAll">Select all <span class="k">Ctrl+A</span></button>
+    ${hasSel?`<button data-a="clear">Clear selection</button>`:""}`;
+  m.style.display="block";
+  m.style.left=Math.min(x,innerWidth-260)+"px"; m.style.top=Math.min(y,innerHeight-m.offsetHeight-10)+"px";
+  m.onclick=e=>{
+    const a=e.target.closest("button")?.dataset.a; if(!a) return;
+    const sel=p.selSeq(), trim=v.seq.slice(v.trim[0],v.trim[1]+1);
+    if(a==="blast")blastSeq(sel);
+    if(a==="blastTrim")blastSeq(trim);
+    if(a==="copy")copyText(sel,"Selection copied");
+    if(a==="copyRC")copyText(revcomp(sel),"Reverse-complement copied");
+    if(a==="copyFa")copyText(`>${fastaName(p)}_${p.sel[0]+1}-${p.sel[1]+1}\n`+wrap(sel),"FASTA copied");
+    if(a==="copyTrim")copyText(trim,"Trimmed read copied");
+    if(a==="copyFull")copyText(v.seq,"Full read copied");
+    if(a==="selTrim"){p.sel=[v.trim[0],v.trim[1]];p.render();p.status();}
+    if(a==="selAll"){p.sel=[0,v.seq.length-1];p.render();p.status();}
+    if(a==="clear"){p.sel=null;p.render();p.status();}
+    m.style.display="none";
+  };
+}
+window.addEventListener("mousedown",e=>{ if(!e.target.closest("#ctxMenu")) $("#ctxMenu").style.display="none"; });
+window.addEventListener("blur",()=>$("#ctxMenu").style.display="none");
+const wrap=s=>s.replace(/(.{70})/g,"$1\n");
+
+/* ============================================================
+   Search (IUPAC, both strands)
+   ============================================================ */
+function runSearch(){
+  const p=focusedPane; if(!p||!p.view) return;
+  const raw=$("#searchInput").value.trim().toUpperCase().replace(/[^A-Z]/g,"");
+  p.matches=[]; p.matchIdx=-1;
+  if(raw.length>=3){
+    const toRx=s=>s.split("").map(c=>IUPAC_RX[c]||"X").join("");
+    const seq=p.view.seq;
+    for (const [motif,strand] of [[raw,"+"],[revcomp(raw),"−"]]){
+      if (strand==="−" && revcomp(raw)===raw) continue;
+      const rx=new RegExp(toRx(motif),"g"); let m;
+      while((m=rx.exec(seq))){ p.matches.push({s:m.index,e:m.index+raw.length-1,strand}); rx.lastIndex=m.index+1; }
+    }
+    p.matches.sort((a,b)=>a.s-b.s);
+  }
+  $("#searchCount").textContent = raw.length<3 ? "–" : (p.matches.length? `0/${p.matches.length}` : "0 hit");
+  p.render();
+  if (p.matches.length) stepMatch(1);
+}
+function stepMatch(d){
+  const p=focusedPane; if(!p||!p.matches.length) return;
+  p.matchIdx=(p.matchIdx+d+p.matches.length)%p.matches.length;
+  const m=p.matches[p.matchIdx];
+  p.sel=[m.s,m.e]; p.caret=m.s; p.anchor=m.s;
+  p.hs.scrollLeft=Math.max(0,p.view.ploc[m.s]*p.xs - p.holder.clientWidth/2);
+  $("#searchCount").textContent=`${p.matchIdx+1}/${p.matches.length}${m.strand==="−"?" (−)":""}`;
+  p.render(); p.status();
+}
+$("#searchInput").addEventListener("input",runSearch);
+$("#searchInput").addEventListener("keydown",e=>{ if(e.key==="Enter"){e.preventDefault();stepMatch(e.shiftKey?-1:1);} });
+$("#searchNext").onclick=()=>stepMatch(1);
+$("#searchPrev").onclick=()=>stepMatch(-1);
+window.addEventListener("keydown",e=>{
+  if(e.key==="F3"){ e.preventDefault(); stepMatch(e.shiftKey?-1:1); }
+  if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="f"){ e.preventDefault(); $("#searchInput").focus(); $("#searchInput").select(); }
+});
+
+/* ============================================================
+   Export
+   ============================================================ */
+function download(name, blobOrText, type){
+  const blob = blobOrText instanceof Blob ? blobOrText : new Blob([blobOrText],{type});
+  const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=name;
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),4000);
+}
+function expRange(p){
+  const v=p.view, scope=document.querySelector('input[name=expScope]:checked').value;
+  if (scope==="selection"){ if(!p.sel){toast("No selection in the focused pane");return null;} return p.sel; }
+  if (scope==="trimmed") return v.trim;
+  return [0,v.seq.length-1];
+}
+$("#exportBtn").onclick=()=>{ if(!focusedPane?.view){toast("Open a file first");return;} $("#exportDlg").showModal(); };
+$("#expFasta").onclick=()=>{ const p=focusedPane,v=p.view,r=expRange(p); if(!r)return;
+  download(fastaName(p)+".fasta", `>${fastaName(p)}_${r[0]+1}-${r[1]+1}\n`+wrap(v.seq.slice(r[0],r[1]+1))+"\n","text/plain"); $("#exportDlg").close(); };
+$("#expFastq").onclick=()=>{ const p=focusedPane,v=p.view,r=expRange(p); if(!r)return;
+  const q=[...v.qual.slice(r[0],r[1]+1)].map(x=>String.fromCharCode(Math.min(93,x)+33)).join("");
+  download(fastaName(p)+".fastq", `@${fastaName(p)}_${r[0]+1}-${r[1]+1}\n${v.seq.slice(r[0],r[1]+1)}\n+\n${q}\n`,"text/plain"); $("#exportDlg").close(); };
+$("#expPng").onclick=()=>{ const p=focusedPane;
+  const off=document.createElement("canvas");
+  const W=p.holder.clientWidth,H=p.holder.clientHeight;
+  off.width=W*2; off.height=(H+26)*2;
+  const g=off.getContext("2d"); g.scale(2,2);
+  g.fillStyle="#fff"; g.fillRect(0,0,W,H+26);
+  g.fillStyle="#16222e"; g.font="bold 12px system-ui";
+  const v=p.view;
+  g.fillText(`${v.name}${p.rc?"  (reverse-complement)":""}   —   Fennec Trace`, 8, 16);
+  g.drawImage(p.cv,0,26,W,H);
+  off.toBlob(b=>download(fastaName(p)+"_trace.png", b)); $("#exportDlg").close(); };
+
+/* ============================================================
+   Settings / dialogs
+   ============================================================ */
+document.querySelectorAll("dialog [data-close]").forEach(b=>b.onclick=()=>b.closest("dialog").close());
+$("#settingsBtn").onclick=()=>$("#settingsDlg").showModal();
+$("#helpBtn").onclick=()=>$("#helpDlg").showModal();
+$("#hetThr").oninput=e=>{ settings.hetThr=+e.target.value; $("#hetThrVal").textContent=settings.hetThr+"%"; reflowAll(); };
+$("#trimQ").oninput=e=>{ settings.trimQ=+e.target.value; $("#trimQVal").textContent=`Q${settings.trimQ} (p=${Math.pow(10,-settings.trimQ/10).toFixed(3)})`; reflowAll(); };
+$("#showHets").onchange=e=>{ settings.showHets=e.target.checked; panes.forEach(p=>p.refresh()); };
+$("#showTrim").onchange=e=>{ settings.showTrim=e.target.checked; panes.forEach(p=>p.render()); };
+$("#showQual").onchange=e=>{ settings.showQual=e.target.checked; panes.forEach(p=>p.render()); };
+function reflowAll(){ files.forEach(invalidateViews); panes.forEach(p=>p.refresh()); }
+
+/* split view */
+$("#splitBtn").onclick=()=>{
+  if (panes.length===1){
+    const v=addPane();
+    v.setFile(files.length>1 ? (panes[0].fileIdx+1)%files.length : panes[0].fileIdx);
+    $("#splitBtn").classList.add("on");
+  } else {
+    const v=panes.pop(); if(focusedPane===v) setFocus(panes[0]);
+    v.root.remove(); $("#splitBtn").classList.remove("on");
+  }
+  panes.forEach(p=>p.refresh(true));
+};
+
+/* service worker (only when served over http/https — file:// still works without it) */
+if ("serviceWorker" in navigator && location.protocol.startsWith("http")){
+  navigator.serviceWorker.register("sw.js").catch(()=>{});
+}
+
+/* boot */
+const p0=addPane(); setFocus(p0); renderTabs(); ensureEmptyState();
+</script>
+</body>
+</html>
