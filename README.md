@@ -27,7 +27,7 @@ Open the link above. It can also be installed as an app, which lets you double-c
 
 ## License & citation
 
-© 2026 Soufiyan Rehioui. All rights reserved.
+© 2026 Rehioui Soufiyan. All rights reserved.
 
 You're welcome to explore this code. If you'd like to use, adapt, or share it, please get in touch first: rehiouisoufiyan@gmail.com
 
